@@ -1,0 +1,106 @@
+name: COPILOT_GITHUB_TOKEN read-only audit
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+    steps:
+      - name: Read account and repository access
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$GH_TOKEN" ]]; then
+            message='COPILOT_GITHUB_TOKEN is unavailable to this workflow.'
+            printf '::error::%s\n' "$message"
+            printf '## Read-only token audit\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          tmpdir="$(mktemp -d)"
+          trap 'rm -f "$tmpdir/auth-header" "$tmpdir/response.json" "$tmpdir/curl.err"; rmdir "$tmpdir"' EXIT
+          printf 'Authorization: Bearer %s\n' "$GH_TOKEN" > "$tmpdir/auth-header"
+          chmod 600 "$tmpdir/auth-header"
+          unset GH_TOKEN
+
+          failed=0
+          printf '## Read-only token audit\n\nNo settings or pull requests were changed.\n\n' >> "$GITHUB_STEP_SUMMARY"
+
+          request() {
+            local path="$1"
+            local url="https://api.github.com${path}"
+            local status=''
+            local curl_status=0
+
+            : > "$tmpdir/response.json"
+            : > "$tmpdir/curl.err"
+            if status="$(curl --silent --show-error \
+              --header "@$tmpdir/auth-header" \
+              --header 'Accept: application/vnd.github+json' \
+              --header 'X-GitHub-Api-Version: 2022-11-28' \
+              --output "$tmpdir/response.json" \
+              --stderr "$tmpdir/curl.err" \
+              --write-out '%{http_code}' \
+              "$url")"; then
+              curl_status=0
+            else
+              curl_status=$?
+            fi
+
+            printf '\nGET %s\nHTTP status: %s\n' "$url" "${status:-000}"
+            {
+              printf '\n### `GET %s`\n\nHTTP status: `%s`; curl exit: `%s`.\n\n' "$url" "${status:-000}" "$curl_status"
+            } >> "$GITHUB_STEP_SUMMARY"
+
+            if [[ "$curl_status" -ne 0 ]]; then
+              cat "$tmpdir/curl.err"
+              {
+                printf 'Exact curl error:\n\n````text\n'
+                cat "$tmpdir/curl.err"
+                printf '\n````\n'
+              } >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+              return
+            fi
+
+            if [[ "$status" =~ ^2[0-9][0-9]$ ]]; then
+              case "$path" in
+                /user)
+                  if ! filtered="$(jq -c '{login}' "$tmpdir/response.json" 2>"$tmpdir/curl.err")"; then
+                    cat "$tmpdir/curl.err"
+                    failed=1
+                    return
+                  fi
+                  ;;
+                *)
+                  if ! filtered="$(jq -c '{permissions: (.permissions // null)}' "$tmpdir/response.json" 2>"$tmpdir/curl.err")"; then
+                    cat "$tmpdir/curl.err"
+                    failed=1
+                    return
+                  fi
+                  ;;
+              esac
+              printf '%s\n' "$filtered"
+              printf '%s\n' "$filtered" >> "$GITHUB_STEP_SUMMARY"
+            else
+              printf 'Exact response body:\n'
+              cat "$tmpdir/response.json"
+              {
+                printf 'Exact error response body:\n\n````json\n'
+                cat "$tmpdir/response.json"
+                printf '\n````\n'
+              } >> "$GITHUB_STEP_SUMMARY"
+              failed=1
+            fi
+          }
+
+          request '/user'
+          request '/repos/aozq/expo-native-core'
+          request '/repos/aozq/Voice-Flow-Engine'
+          exit "$failed"
