@@ -72,6 +72,10 @@ It continues to all targets and fails if any edit or verification command fails,
 or any verified value is not `true`. Exact GitHub command output, error messages,
 exit codes, and per-target results appear in logs and the run summary.
 An unavailable selected secret fails explicitly before any edits.
+Failed targets also include read-only REST/GraphQL settings, credential
+permissions, and the authenticated account's reported plan in logs and summaries.
+Diagnostic failures are reported with their exact errors and exit codes; they
+never turn a failed target into a success.
 
 A successful edit or reported `admin=true` is not proof that the setting changed.
 Treat the subsequent `allow_auto_merge` value as the actual result; if it remains

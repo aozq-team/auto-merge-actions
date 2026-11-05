@@ -63,7 +63,7 @@ jobs:
           printf '## Repository auto-merge settings\n\nCredential: `%s`\n\nNo pull requests are merged or queued by this workflow.\n' "$CREDENTIAL" >> "$GITHUB_STEP_SUMMARY"
           failed=0
           log_dir="$(mktemp -d)"
-          trap 'rm -f "$log_dir/edit.log" "$log_dir/verify.out" "$log_dir/verify.err"; rmdir "$log_dir"' EXIT
+          trap 'rm -f "$log_dir/edit.log" "$log_dir/verify.out" "$log_dir/verify.err" "$log_dir/diagnostics.log"; rmdir "$log_dir"' EXIT
 
           for repo in "${targets[@]}"; do
             printf '\n=== %s ===\n' "$repo"
@@ -78,10 +78,28 @@ jobs:
             verified="$(cat "$log_dir/verify.out")"
 
             result=PASS
+            : > "$log_dir/diagnostics.log"
             if (( edit_status != 0 || verify_status != 0 )) || [[ "$verified" != "true" ]]; then
               result=FAIL
               failed=1
               printf '::error::%s: edit exit=%s, verification exit=%s; allow_auto_merge must be true.\n' "$repo" "$edit_status" "$verify_status"
+              {
+                printf 'Repository eligibility and credential permissions:\n'
+                diagnostic_status=0
+                gh api "repos/$repo" --jq '{allow_auto_merge, private, archived, permissions, owner_type: .owner.type}' || diagnostic_status=$?
+                printf 'Repository diagnostic exit code: %s\n\n' "$diagnostic_status"
+                printf 'Authenticated account plan (null means not reported; organization billing may differ):\n'
+                diagnostic_status=0
+                gh api user --jq '{plan: .plan.name}' || diagnostic_status=$?
+                printf 'Account plan diagnostic exit code: %s\n\n' "$diagnostic_status"
+                printf 'GraphQL repository settings:\n'
+                diagnostic_status=0
+                gh api graphql \
+                  -f query='query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { autoMergeAllowed viewerCanAdminister } }' \
+                  -f owner="${repo%%/*}" -f name="${repo#*/}" || diagnostic_status=$?
+                printf '\nGraphQL diagnostic exit code: %s\n' "$diagnostic_status"
+              } > "$log_dir/diagnostics.log" 2>&1
+              cat "$log_dir/diagnostics.log"
             fi
 
             {
@@ -93,6 +111,11 @@ jobs:
               cat "$log_dir/verify.out"
               cat "$log_dir/verify.err"
               printf '\n````\n'
+              if [[ "$result" == FAIL ]]; then
+                printf '\nRead-only diagnostics (errors preserved):\n\n````text\n'
+                cat "$log_dir/diagnostics.log"
+                printf '\n````\n'
+              fi
             } >> "$GITHUB_STEP_SUMMARY"
           done
           exit "$failed"
