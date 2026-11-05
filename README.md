@@ -107,3 +107,40 @@ output, target owner login/type, edit exit codes/errors, and fresh REST
 reconcile the reported plan with the owner's subscription and investigate
 accepted setting updates that do not persist. Supply any billing confirmation
 privately to Support, not in this public repository or Actions logs.
+
+### Support evidence: 2026-11-05
+
+The `GH_CLASSIC` verification run
+[41946650258](https://github.com/aozq-team/auto-merge-actions/actions/runs/41946650258)
+queried `GET https://api.github.com/user` at `2026-11-05T01:10:21Z` with:
+
+```sh
+gh api user --jq '{login, type, plan: {name: .plan.name}}'
+```
+
+Filtered, non-sensitive response (exit code `0`):
+
+```json
+{"login":"aozq","plan":{"name":"free"},"type":"User"}
+```
+
+This identifies the authenticated credential owner as `aozq`. Both
+`GET https://api.github.com/repos/aozq/expo-native-core` and
+`GET https://api.github.com/repos/aozq/Voice-Flow-Engine` reported
+`owner: {"login":"aozq","type":"User"}`, `private: true`, and
+`permissions.admin: true`. The account-plan response therefore describes the
+repository owner, not organization `aozq-team` or a different token owner.
+
+For each target, `gh repo edit <repo> --enable-auto-merge` exited `0` without
+output or errors. Fresh `gh api repos/<repo> --jq .allow_auto_merge` reads also
+exited `0`, but returned `false` at `01:10:22Z` and `01:10:24Z`, respectively.
+Read-only `POST https://api.github.com/graphql` queries corroborated
+`autoMergeAllowed: false` and `viewerCanAdminister: true` for both. The workflow
+correctly failed; enabling auto-merge is **not complete**.
+
+The user reports active **GitHub Pro** on `aozq`; that subscription has not been
+independently verified by this runner. The API's `free` result conflicts with
+that report. Support should reconcile account billing/entitlements and explain
+why the accepted edits do not persist before recommending another purchase.
+GitHub Pro and Copilot Pro are separate subscriptions. `GH_CLASSIC` remains the
+default; token permissions were not changed, and no PR was merged or queued.
