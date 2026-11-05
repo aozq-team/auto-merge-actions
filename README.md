@@ -81,3 +81,10 @@ A successful edit or reported `admin=true` is not proof that the setting changed
 Treat the subsequent `allow_auto_merge` value as the actual result; if it remains
 false, inspect the recorded GitHub errors and repository/organization policies
 instead of assuming another token scope change will fix it.
+
+GitHub Free supports auto-merge only for public repositories. Private repositories
+require GitHub Pro (personal ownership), Team, or Enterprise; hosting this runner
+in a public repository does not change the targets' eligibility. See
+[GitHub's auto-merge availability](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/automatically-merging-a-pull-request).
+Compare REST `allow_auto_merge` with GraphQL `autoMergeAllowed` when diagnosing
+an accepted edit that does not persist. An absent REST field is not success.
