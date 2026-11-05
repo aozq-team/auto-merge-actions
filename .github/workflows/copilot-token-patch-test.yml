@@ -1,0 +1,127 @@
+name: COPILOT_GITHUB_TOKEN PATCH test
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  patch-test:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+    steps:
+      - name: Check identity and PATCH the single repository
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$GH_TOKEN" ]]; then
+            message='COPILOT_GITHUB_TOKEN is unavailable to this workflow.'
+            printf '::error::%s\n' "$message"
+            printf '## Credential PATCH test\n\n%s\n' "$message" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+          tmpdir="$(mktemp -d)"
+          trap 'rm -f "$tmpdir/auth-header" "$tmpdir/user.json" "$tmpdir/user.headers" "$tmpdir/user.err" "$tmpdir/patch.json" "$tmpdir/patch.headers" "$tmpdir/patch.err"; rmdir "$tmpdir"' EXIT
+          printf 'Authorization: Bearer %s\n' "$GH_TOKEN" > "$tmpdir/auth-header"
+          chmod 600 "$tmpdir/auth-header"
+          unset GH_TOKEN
+
+          failed=0
+          printf '## Credential PATCH test\n\nTarget: `aozq/expo-native-core`. No other repository or pull request was touched.\n\n' >> "$GITHUB_STEP_SUMMARY"
+
+          user_status=''
+          user_curl_status=0
+          : > "$tmpdir/user.json"
+          : > "$tmpdir/user.headers"
+          : > "$tmpdir/user.err"
+          if user_status="$(curl --silent --show-error \
+            --header "@$tmpdir/auth-header" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --output "$tmpdir/user.json" \
+            --dump-header "$tmpdir/user.headers" \
+            --stderr "$tmpdir/user.err" \
+            --write-out '%{http_code}' \
+            'https://api.github.com/user')"; then
+            user_curl_status=0
+          else
+            user_curl_status=$?
+          fi
+
+          printf 'GET /user HTTP status: %s\n' "${user_status:-000}"
+          {
+            printf '### `GET /user`\n\nHTTP status: `%s`; curl exit: `%s`.\n\n' "${user_status:-000}" "$user_curl_status"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [[ "$user_curl_status" -eq 0 && "$user_status" =~ ^2[0-9][0-9]$ ]]; then
+            login="$(jq -er '.login' "$tmpdir/user.json")"
+            printf 'Account login: %s\n' "$login"
+            printf 'Account login: `%s`\n\n' "$login" >> "$GITHUB_STEP_SUMMARY"
+          else
+            failed=1
+            if [[ -s "$tmpdir/user.err" ]]; then
+              cat "$tmpdir/user.err"
+              printf 'Exact curl error:\n\n````text\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "$tmpdir/user.err" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n````\n\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [[ -s "$tmpdir/user.json" ]]; then
+              printf 'Exact API error body:\n'
+              cat "$tmpdir/user.json"
+              printf 'Exact API error body:\n\n````json\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "$tmpdir/user.json" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n````\n\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+          patch_status=''
+          patch_curl_status=0
+          : > "$tmpdir/patch.json"
+          : > "$tmpdir/patch.headers"
+          : > "$tmpdir/patch.err"
+          if patch_status="$(curl --silent --show-error \
+            --request PATCH \
+            --header "@$tmpdir/auth-header" \
+            --header 'Accept: application/vnd.github+json' \
+            --header 'Content-Type: application/json' \
+            --header 'X-GitHub-Api-Version: 2022-11-28' \
+            --data '{"allow_auto_merge":true}' \
+            --output "$tmpdir/patch.json" \
+            --dump-header "$tmpdir/patch.headers" \
+            --stderr "$tmpdir/patch.err" \
+            --write-out '%{http_code}' \
+            'https://api.github.com/repos/aozq/expo-native-core')"; then
+            patch_curl_status=0
+          else
+            patch_curl_status=$?
+          fi
+
+          accepted_permissions="$(awk 'BEGIN{IGNORECASE=1} /^X-Accepted-GitHub-Permissions:/ {sub(/\r$/, "", $0); sub(/^[^:]*:[[:space:]]*/, "", $0); print}' "$tmpdir/patch.headers" | tail -n 1)"
+          printf 'PATCH /repos/aozq/expo-native-core HTTP status: %s\n' "${patch_status:-000}"
+          printf 'X-Accepted-GitHub-Permissions: %s\n' "${accepted_permissions:-<not returned>}"
+          {
+            printf '### `PATCH /repos/aozq/expo-native-core`\n\nHTTP status: `%s`; curl exit: `%s`.\n\n' "${patch_status:-000}" "$patch_curl_status"
+            printf 'X-Accepted-GitHub-Permissions: `%s`\n\n' "${accepted_permissions:-<not returned>}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "$patch_curl_status" -ne 0 || ! "$patch_status" =~ ^2[0-9][0-9]$ ]]; then
+            failed=1
+            if [[ -s "$tmpdir/patch.err" ]]; then
+              printf 'Exact curl error:\n'
+              cat "$tmpdir/patch.err"
+              printf 'Exact curl error:\n\n````text\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "$tmpdir/patch.err" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n````\n\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [[ -s "$tmpdir/patch.json" ]]; then
+              printf 'Exact API error body:\n'
+              cat "$tmpdir/patch.json"
+              printf 'Exact API error body:\n\n````json\n' >> "$GITHUB_STEP_SUMMARY"
+              cat "$tmpdir/patch.json" >> "$GITHUB_STEP_SUMMARY"
+              printf '\n````\n' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+
+          exit "$failed"
