@@ -63,7 +63,23 @@ jobs:
           printf '## Repository auto-merge settings\n\nCredential: `%s`\n\nNo pull requests are merged or queued by this workflow.\n' "$CREDENTIAL" >> "$GITHUB_STEP_SUMMARY"
           failed=0
           log_dir="$(mktemp -d)"
-          trap 'rm -f "$log_dir/edit.log" "$log_dir/verify.out" "$log_dir/verify.err" "$log_dir/diagnostics.log"; rmdir "$log_dir"' EXIT
+          trap 'rm -f "$log_dir/edit.log" "$log_dir/verify.out" "$log_dir/verify.err" "$log_dir/diagnostics.log" "$log_dir/account.log"; rmdir "$log_dir"' EXIT
+
+          {
+            printf 'Account diagnostic time (UTC): '
+            date -u +'%Y-%m-%dT%H:%M:%SZ'
+            printf 'GET https://api.github.com/user (authenticated credential owner, not the runner organization):\n'
+            diagnostic_status=0
+            gh api user --jq '{login, type, plan: {name: .plan.name}}' || diagnostic_status=$?
+            printf 'Account diagnostic exit code: %s\n' "$diagnostic_status"
+            printf 'This is the reported GitHub account plan, not Copilot Pro billing. It does not independently verify an active subscription.\n'
+          } > "$log_dir/account.log" 2>&1
+          cat "$log_dir/account.log"
+          {
+            printf '\n### Credential account identity and reported plan\n\n````text\n'
+            cat "$log_dir/account.log"
+            printf '\n````\n'
+          } >> "$GITHUB_STEP_SUMMARY"
 
           for repo in "${targets[@]}"; do
             printf '\n=== %s ===\n' "$repo"
@@ -84,14 +100,10 @@ jobs:
               failed=1
               printf '::error::%s: edit exit=%s, verification exit=%s; allow_auto_merge must be true.\n' "$repo" "$edit_status" "$verify_status"
               {
-                printf 'Repository eligibility and credential permissions:\n'
+                printf 'GET https://api.github.com/repos/%s (repository owner and credential permissions):\n' "$repo"
                 diagnostic_status=0
-                gh api "repos/$repo" --jq '{allow_auto_merge, private, archived, permissions, owner_type: .owner.type}' || diagnostic_status=$?
+                gh api "repos/$repo" --jq '{allow_auto_merge, private, archived, permissions, owner: {login: .owner.login, type: .owner.type}}' || diagnostic_status=$?
                 printf 'Repository diagnostic exit code: %s\n\n' "$diagnostic_status"
-                printf 'Authenticated account plan (null means not reported; organization billing may differ):\n'
-                diagnostic_status=0
-                gh api user --jq '{plan: .plan.name}' || diagnostic_status=$?
-                printf 'Account plan diagnostic exit code: %s\n\n' "$diagnostic_status"
                 printf 'GraphQL repository settings:\n'
                 diagnostic_status=0
                 gh api graphql \

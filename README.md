@@ -72,8 +72,11 @@ It continues to all targets and fails if any edit or verification command fails,
 or any verified value is not `true`. Exact GitHub command output, error messages,
 exit codes, and per-target results appear in logs and the run summary.
 An unavailable selected secret fails explicitly before any edits.
-Failed targets also include read-only REST/GraphQL settings, credential
-permissions, and the authenticated account's reported plan in logs and summaries.
+Every run records `GET https://api.github.com/user` with only the authenticated
+credential owner's `login`, `type`, and `plan.name`. This describes the token's
+user account, not automatically repository owner `aozq` or runner organization
+`aozq-team`. Failed targets also include read-only REST/GraphQL settings,
+credential permissions, and repository owner login/type in logs and summaries.
 Diagnostic failures are reported with their exact errors and exit codes; they
 never turn a failed target into a success.
 
@@ -88,3 +91,19 @@ in a public repository does not change the targets' eligibility. See
 [GitHub's auto-merge availability](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/automatically-merging-a-pull-request).
 Compare REST `allow_auto_merge` with GraphQL `autoMergeAllowed` when diagnosing
 an accepted edit that does not persist. An absent REST field is not success.
+
+GitHub Pro is a personal GitHub account plan; Copilot Pro is a separate AI
+subscription and does not confer GitHub Pro repository features. A `/user`
+response alone does not independently verify billing or prove an upgrade is
+needed. If its login is not the repository owner, its plan is not evidence of
+the repository owner's plan.
+
+If `/user` identifies `aozq` but reports `plan.name: free` while active **GitHub
+Pro** billing is reported for `aozq`, treat that as an API/entitlement discrepancy,
+not a recommendation to buy another upgrade or change token permissions.
+For GitHub Support, provide the run URL/time, exact endpoint and filtered account
+output, target owner login/type, edit exit codes/errors, and fresh REST
+`allow_auto_merge` plus GraphQL `autoMergeAllowed` readbacks. Ask Support to
+reconcile the reported plan with the owner's subscription and investigate
+accepted setting updates that do not persist. Supply any billing confirmation
+privately to Support, not in this public repository or Actions logs.
