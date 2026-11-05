@@ -1,0 +1,98 @@
+name: Enable repository auto-merge
+
+on:
+  workflow_dispatch:
+    inputs:
+      credential:
+        description: Organization Actions secret to use
+        type: choice
+        required: true
+        default: GH_CLASSIC
+        options:
+          - GH_CLASSIC
+          - COPILOT_GITHUB_TOKEN
+      repositories:
+        description: Space-separated owner/repository names
+        type: string
+        required: true
+        default: aozq/expo-native-core aozq/Voice-Flow-Engine
+
+permissions: {}
+
+jobs:
+  enable-auto-merge:
+    runs-on: ubuntu-latest
+    env:
+      CREDENTIAL: ${{ inputs.credential }}
+      REPOSITORIES: ${{ inputs.repositories }}
+      GH_TOKEN: ${{ inputs.credential == 'GH_CLASSIC' && secrets.GH_CLASSIC || inputs.credential == 'COPILOT_GITHUB_TOKEN' && secrets.COPILOT_GITHUB_TOKEN || '' }}
+    steps:
+      - name: Validate inputs and enable repository auto-merge
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          fail_validation() {
+            printf '::error::%s\n' "$1"
+            printf '## Configuration error\n\n%s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+
+          case "$CREDENTIAL" in
+            GH_CLASSIC|COPILOT_GITHUB_TOKEN) ;;
+            *) fail_validation 'Credential must be GH_CLASSIC or COPILOT_GITHUB_TOKEN.' ;;
+          esac
+
+          if [[ -z "$REPOSITORIES" || "$REPOSITORIES" == *[!A-Za-z0-9_./\ -]* ]]; then
+            fail_validation 'Repositories must be space-separated owner/repository names (no tabs, newlines, or shell syntax).'
+          fi
+          read -r -a targets <<< "$REPOSITORIES"
+          if (( ${#targets[@]} == 0 )); then
+            fail_validation 'At least one repository is required.'
+          fi
+          for repo in "${targets[@]}"; do
+            if [[ ! "$repo" =~ ^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.-]+$ || "${repo#*/}" == "." || "${repo#*/}" == ".." ]]; then
+              fail_validation 'Each repository must use the owner/repository format.'
+            fi
+          done
+
+          if [[ -z "$GH_TOKEN" ]]; then
+            fail_validation "The selected organization secret ($CREDENTIAL) is unavailable. For this public repository, set its organization Actions secret visibility to All repositories, or Selected repositories including aozq-team/auto-merge-actions. Private repositories visibility does not include public repositories."
+          fi
+
+          printf '## Repository auto-merge settings\n\nCredential: `%s`\n\nNo pull requests are merged or queued by this workflow.\n' "$CREDENTIAL" >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          log_dir="$(mktemp -d)"
+          trap 'rm -f "$log_dir/edit.log" "$log_dir/verify.out" "$log_dir/verify.err"; rmdir "$log_dir"' EXIT
+
+          for repo in "${targets[@]}"; do
+            printf '\n=== %s ===\n' "$repo"
+            edit_status=0
+            gh repo edit "$repo" --enable-auto-merge > "$log_dir/edit.log" 2>&1 || edit_status=$?
+            cat "$log_dir/edit.log"
+
+            verify_status=0
+            gh api "repos/$repo" --jq .allow_auto_merge > "$log_dir/verify.out" 2> "$log_dir/verify.err" || verify_status=$?
+            cat "$log_dir/verify.out"
+            cat "$log_dir/verify.err"
+            verified="$(cat "$log_dir/verify.out")"
+
+            result=PASS
+            if (( edit_status != 0 || verify_status != 0 )) || [[ "$verified" != "true" ]]; then
+              result=FAIL
+              failed=1
+              printf '::error::%s: edit exit=%s, verification exit=%s; allow_auto_merge must be true.\n' "$repo" "$edit_status" "$verify_status"
+            fi
+
+            {
+              printf '\n### %s: %s\n\n' "$repo" "$result"
+              printf 'Edit exit code: `%s`; verification exit code: `%s`.\n\n' "$edit_status" "$verify_status"
+              printf 'Edit output (including exact GitHub errors):\n\n````text\n'
+              cat "$log_dir/edit.log"
+              printf '\n````\n\nVerification output:\n\n````text\n'
+              cat "$log_dir/verify.out"
+              cat "$log_dir/verify.err"
+              printf '\n````\n'
+            } >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit "$failed"
